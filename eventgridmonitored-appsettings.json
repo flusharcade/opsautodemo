@@ -1,5 +1,5 @@
 { 
-   "Setting-01": "expected-value-01", 
-   "Setting-02": "expected-value-02", 
-   "Setting-03": "expected-value-03" 
+   "Setting01": "expected-value-01", 
+   "Setting02": "expected-value-02", 
+   "Setting03": "expected-value-03" 
 }
