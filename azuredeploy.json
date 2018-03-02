@@ -1,0 +1,324 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "azureblob_1_Connection_Name": {
+      "type": "string"
+    },
+    "azureblob_1_Connection_DisplayName": {
+      "type": "string"
+    },
+    "azureblob_1_accountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the storage account the connector should use."
+      }
+    },
+    "azureblob_1_accessKey": {
+      "type": "securestring",
+      "metadata": {
+        "description": "Specify a valid primary/secondary storage account access key."
+      }
+    },
+    "outlook_1_Connection_Name": {
+      "type": "string",
+      "defaultValue": "outlook"
+    },
+    "outlook_1_Connection_DisplayName": {
+      "type": "string"
+    },
+    "arm_1_Connection_Name": {
+      "type": "string",
+      "defaultValue": "arm"
+    },
+    "arm_1_Connection_DisplayName": {
+      "type": "string"
+    },
+    "azureeventgrid_1_Connection_Name": {
+      "type": "string",
+      "defaultValue": "azureeventgrid"
+    },
+    "azureeventgrid_1_Connection_DisplayName": {
+      "type": "string"
+    },
+    "LogicAppLocation": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "variables": {},
+  "resources": [
+    {
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "actions": {
+            "Get_Claims_Info_From_Event": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "ClaimsInfo",
+                    "type": "Object",
+                    "value": "@json(triggerBody()?['data']?['claims'])"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Initialise_DesiredState_as_JSON_Object": [
+                  "Succeeded"
+                ]
+              },
+              "description": "Get Claims Info from Event to get the author"
+            },
+            "Get_Resource_Desired_State_From_Blob": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azureblob']['connectionId']"
+                  }
+                },
+                "method": "get",
+                "path": "/datasets/default/files/@{encodeURIComponent(encodeURIComponent('L2Rlc2lyZWRjb25maWcveW91cndlYmFwcC1hcHBzZXR0aW5ncy5qc29u'))}/content",
+                "queries": {
+                  "inferContentType": true
+                }
+              },
+              "runAfter": {
+                "Get_Resource_New_State_From_ARM": [
+                  "Succeeded"
+                ]
+              },
+              "metadata": {
+                "L2Rlc2lyZWRjb25maWcveW91cndlYmFwcC1hcHBzZXR0aW5ncy5qc29u": "/desiredconfig/yourwebapp-appsettings.json"
+              },
+              "description": "Get the Desired State of the Resource from a Blob"
+            },
+            "Get_Resource_New_State_From_ARM": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['arm']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/subscriptions/@{encodeURIComponent('9ac0de1a-c292-0000-9999-c8cc07fc8088')}/resourcegroups/@{encodeURIComponent('eventgrid-rgrp')}/providers/@{encodeURIComponent('Microsoft.Web')}/@{encodeURIComponent('sites/yourwebapp/config/appsettings')}/@{encodeURIComponent('list')}",
+                "queries": {
+                  "x-ms-api-version": "2016-08-01"
+                }
+              },
+              "runAfter": {
+                "Was_Update_Successful": [
+                  "Succeeded"
+                ]
+              },
+              "description": "Get the state of the Resource after the triggering event from the ARM API, using the Invoke action"
+            },
+            "Initialise_DesiredState_as_JSON_Object": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "DesiredState",
+                    "type": "Object",
+                    "value": "@json(body('Get_Resource_Desired_State_From_Blob'))"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Get_Resource_Desired_State_From_Blob": [
+                  "Succeeded"
+                ]
+              },
+              "description": "Initialise the DesiredState object variable to the JSON Object obtained from the Blob"
+            },
+            "Is_New_State_Different_to_Desired_State": {
+              "type": "If",
+              "expression": "@not(equals(body('Get_Resource_New_State_From_ARM')?['properties'], variables('DesiredState')))",
+              "actions": {
+                "Send_Email_to_Notify_Configuration_Drift": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": {
+                      "connection": {
+                        "name": "@parameters('$connections')['outlook']['connectionId']"
+                      }
+                    },
+                    "method": "post",
+                    "path": "/Mail",
+                    "body": {
+                      "To": "yourownemail@outlook.com",
+                      "Subject": "A configuration drift has been detected on an Azure resource",
+                      "Body": "Resource: @{triggerBody()?['data']?['resourceUri']} \nOperation: @{triggerBody()?['data']?['operationName']} \nAuthor: @{variables('ClaimsInfo')?['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress']} \nCorrelationId: @{triggerBody()?['data']?['correlationId']}",
+                      "Importance": "Normal",
+                      "IsHtml": false
+                    }
+                  },
+                  "runAfter": {},
+                  "description": "Send an email notification about the configuration drift"
+                }
+              },
+              "runAfter": {
+                "Get_Claims_Info_From_Event": [
+                  "Succeeded"
+                ]
+              },
+              "description": "If the New State is different to the Desired State stored in the Blob, then send an email"
+            },
+            "Was_Update_Successful": {
+              "type": "If",
+              "expression": "@equals(triggerBody()?['data']?['status'], 'Succeeded')",
+              "actions": {},
+              "runAfter": {},
+              "else": {
+                "actions": {
+                  "Terminate": {
+                    "type": "Terminate",
+                    "inputs": {
+                      "runStatus": "Succeeded"
+                    },
+                    "runAfter": {}
+                  }
+                }
+              },
+              "description": "If Update was not successful, then terminate workflow"
+            }
+          },
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "When_a_Resource_Is_Updated": {
+              "type": "ApiConnectionWebhook",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azureeventgrid']['connectionId']"
+                  }
+                },
+                "path": "/subscriptions/@{encodeURIComponent('9ac0de1a-c292-0000-9999-c8cc07fc8088')}/providers/@{encodeURIComponent('Microsoft.Resources.resourceGroups')}/resource/eventSubscriptions",
+                "queries": {
+                  "x-ms-api-version": "2017-06-15-preview",
+                  "subscriptionName": "eventgrid-logic-eventsubconfigdrift"
+                },
+                "body": {
+                  "properties": {
+                    "topic": "/subscriptions/9ac0de1a-c292-0000-9999-c8cc07fc8088/resourceGroups/eventgrid-rgrp",
+                    "destination": {
+                      "endpointType": "webhook",
+                      "properties": {
+                        "endpointUrl": "@{listCallbackUrl()}"
+                      }
+                    },
+                    "filter": {
+                      "subjectBeginsWith": "/subscriptions/9ac0de1a-c292-0000-9999-c8cc07fc8088/resourcegroups/eventgrid-rgrp/providers/Microsoft.Web/sites/yourwebapp/config/appSettings"
+                    }
+                  }
+                }
+              },
+              "description": "Trigger when a Resource matching the Prefix filter is updated using the Resource Group Event Grid Event Publisher ",
+              "splitOn": "@triggerBody()"
+            }
+          },
+          "contentVersion": "1.0.0.0",
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "azureblob": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'azureblob')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('azureblob_1_Connection_Name'))]",
+                "connectionName": "[parameters('azureblob_1_Connection_Name')]"
+              },
+              "arm": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'arm')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('arm_1_Connection_Name'))]",
+                "connectionName": "[parameters('arm_1_Connection_Name')]"
+              },
+              "outlook": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'outlook')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('outlook_1_Connection_Name'))]",
+                "connectionName": "[parameters('outlook_1_Connection_Name')]"
+              },
+              "azureeventgrid": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'azureeventgrid')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', parameters('azureeventgrid_1_Connection_Name'))]",
+                "connectionName": "[parameters('azureeventgrid_1_Connection_Name')]"
+              }
+            }
+          }
+        }
+      },
+      "name": "eventgrid-logic-monitorconfigdrifts",
+      "type": "Microsoft.Logic/workflows",
+      "location": "[parameters('LogicAppLocation')]",
+      "apiVersion": "2016-06-01",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', parameters('azureblob_1_Connection_Name'))]",
+        "[resourceId('Microsoft.Web/connections', parameters('arm_1_Connection_Name'))]",
+        "[resourceId('Microsoft.Web/connections', parameters('outlook_1_Connection_Name'))]",
+        "[resourceId('Microsoft.Web/connections', parameters('azureeventgrid_1_Connection_Name'))]"
+      ]
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2016-06-01",
+      "name": "[parameters('azureblob_1_Connection_Name')]",
+      "location": "westus2",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'azureblob')]"
+        },
+        "displayName": "[parameters('azureblob_1_Connection_DisplayName')]",
+        "parameterValues": {
+          "accountName": "[parameters('azureblob_1_accountName')]",
+          "accessKey": "[parameters('azureblob_1_accessKey')]"
+        }
+      }
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2016-06-01",
+      "name": "[parameters('outlook_1_Connection_Name')]",
+      "location": "westus2",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'outlook')]"
+        },
+        "displayName": "[parameters('outlook_1_Connection_DisplayName')]"
+      }
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2016-06-01",
+      "name": "[parameters('arm_1_Connection_Name')]",
+      "location": "westus2",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'arm')]"
+        },
+        "displayName": "[parameters('arm_1_Connection_DisplayName')]"
+      }
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2016-06-01",
+      "name": "[parameters('azureeventgrid_1_Connection_Name')]",
+      "location": "westus2",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', 'westus2', '/managedApis/', 'azureeventgrid')]"
+        },
+        "displayName": "[parameters('azureeventgrid_1_Connection_DisplayName')]"
+      }
+    }
+  ],
+  "outputs": {}
+}
