@@ -1,5 +1,5 @@
 #### Server Architecture
-<div style="text-align:center"><center><img src="https://github.com/flusharcade/opsautodemo/architecture.png?raw=true" alt="Azure Architecture"/></center></div>
+<div style="text-align:center"><center><img src="https://github.com/flusharcade/opsautodemo/blob/master/architecture.png?raw=true" alt="Azure Architecture"/></center></div>
 
 #### Azure Deployment
 
